@@ -31,10 +31,17 @@ def format_response(result: Any, is_error: bool = False) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Standardized response
     """
+    logger.debug(f"Formatting response: type={type(result)}, value={result}")
+
     if is_error:
         if isinstance(result, str):
             return {"status": "error", "error": result}
         return {"status": "error", "error": str(result)}
+
+    # Handle None values - this indicates an issue with the API call
+    if result is None:
+        logger.warning("Received None result from API call - this indicates an error")
+        return {"status": "error", "error": "API call returned None - check server logs"}
 
     # If result is already a dictionary, return it wrapped
     if isinstance(result, dict):
@@ -48,7 +55,20 @@ def format_response(result: Any, is_error: bool = False) -> Dict[str, Any]:
     if hasattr(result, "to_dict") and callable(getattr(result, "to_dict")):
         return {"status": "success", "response": result.to_dict()}
 
-    # In other cases, convert to string
+    # For other types, try to convert to dict if possible
+    try:
+        # Check if it's a Pydantic model or similar
+        if hasattr(result, "model_dump"):
+            return {"status": "success", "response": result.model_dump()}
+        # Check if it's an attrs/dataclass with asdict
+        if hasattr(result, "__attrs_attrs__") or hasattr(result, "__dataclass_fields__"):
+            import dataclasses
+            return {"status": "success", "response": dataclasses.asdict(result)}
+    except Exception as e:
+        logger.warning(f"Failed to convert result to dict: {e}")
+
+    # In other cases, convert to string (but log this as it might indicate an issue)
+    logger.warning(f"Converting result to string: type={type(result)}, this may indicate missing serialization method")
     return {"status": "success", "response": str(result)}
 
 

@@ -1,0 +1,46 @@
+version: '3.8'
+
+services:
+  lightrag-mcp:
+    build: .
+    container_name: lightrag-mcp-server
+    restart: unless-stopped
+
+    # Environment variables for LightRAG server connection
+    environment:
+      - LIGHTRAG_API_HOST=${LIGHTRAG_API_HOST:-host.docker.internal}
+      - LIGHTRAG_API_PORT=${LIGHTRAG_API_PORT:-9621}
+      - LIGHTRAG_API_KEY=${LIGHTRAG_API_KEY:-no-key}
+
+    # Network configuration for external LightRAG server connectivity
+    networks:
+      - lightrag-network
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# External network for connecting to LightRAG server
+networks:
+  lightrag-network:
+    driver: bridge
+    name: lightrag-mcp-network

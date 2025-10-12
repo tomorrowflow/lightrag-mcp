@@ -3,6 +3,7 @@ Configuration module for LightRAG MCP server.
 """
 
 import argparse
+import os
 
 DEFAULT_HOST = "localhost"
 DEFAULT_PORT = 9621
@@ -25,9 +26,18 @@ def parse_args():
     return parser.parse_args()
 
 
-args = parse_args()
+# Get configuration from environment variables or command line arguments
+LIGHTRAG_API_HOST = os.getenv("LIGHTRAG_API_HOST", DEFAULT_HOST)
+LIGHTRAG_API_PORT = int(os.getenv("LIGHTRAG_API_PORT", str(DEFAULT_PORT)))
+LIGHTRAG_API_KEY = os.getenv("LIGHTRAG_API_KEY", DEFAULT_API_KEY)
 
-LIGHTRAG_API_HOST = args.host
-LIGHTRAG_API_PORT = args.port
-LIGHTRAG_API_KEY = args.api_key
+# Override with command line arguments if provided
+args = parse_args()
+if args.host != DEFAULT_HOST:
+    LIGHTRAG_API_HOST = args.host
+if args.port != DEFAULT_PORT:
+    LIGHTRAG_API_PORT = args.port
+if args.api_key != DEFAULT_API_KEY:
+    LIGHTRAG_API_KEY = args.api_key
+
 LIGHTRAG_API_BASE_URL = f"http://{LIGHTRAG_API_HOST}:{LIGHTRAG_API_PORT}"

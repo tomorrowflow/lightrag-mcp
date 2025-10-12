@@ -86,7 +86,11 @@ class LightRAGClient:
         """
         self.base_url = base_url
         self.api_key = api_key
-        self.client = AuthenticatedClient(base_url=base_url, token=api_key, verify_ssl=False)
+        self.client = AuthenticatedClient(
+            base_url=base_url,
+            token="",  # Empty token since we use API key in headers
+            raise_on_unexpected_status=True,  # Raise exceptions for unexpected status codes
+        ).with_headers({"X-API-Key": api_key})
         logger.info(f"Initialized LightRAG API client: {base_url}")
 
     async def _handle_exception(self, e: Exception, operation_name: str) -> None:

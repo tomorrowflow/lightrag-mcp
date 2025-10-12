@@ -9,7 +9,6 @@ docs/
 !README.md
 
 # Development files
-.env
 .env.*
 .env.example
 

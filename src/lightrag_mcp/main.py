@@ -6,7 +6,6 @@ import logging
 import sys
 
 from lightrag_mcp import config
-from lightrag_mcp.server import mcp
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,7 +32,15 @@ def main():
         else:
             logger.warning("No API key provided")
 
-        mcp.run(transport="stdio")
+        # Choose transport mode based on configuration
+        if config.TRANSPORT_MODE == "http":
+            logger.info("Using HTTP transport mode")
+            from lightrag_mcp.http_server import main as http_main
+            http_main()
+        else:
+            logger.info("Using stdio transport mode")
+            from lightrag_mcp.server import mcp
+            mcp.run(transport="stdio")
 
     except KeyboardInterrupt:
         logger.info("Server stopped by user")

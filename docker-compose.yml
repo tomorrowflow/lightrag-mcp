@@ -6,19 +6,40 @@ services:
     container_name: lightrag-mcp-server
     restart: unless-stopped
 
-    # Environment variables for LightRAG server connection
+    # Environment file configuration
+    env_file:
+      - .env
+
+    # Port configuration for HTTP transport
+    ports:
+      - "${MCP_PORT:-3000}:3000"
+
+    # Environment variables for LightRAG server connection and HTTP transport
     environment:
+      # LightRAG API configuration
       - LIGHTRAG_API_HOST=${LIGHTRAG_API_HOST:-host.docker.internal}
       - LIGHTRAG_API_PORT=${LIGHTRAG_API_PORT:-9621}
       - LIGHTRAG_API_KEY=${LIGHTRAG_API_KEY:-no-key}
+
+      # HTTP transport configuration
+      - TRANSPORT_MODE=${TRANSPORT_MODE:-http}
+      - MCP_HOST=${MCP_HOST:-0.0.0.0}
+      - MCP_PORT=${MCP_PORT:-3000}
+
+      # HTTP server settings
+      - STATEFUL_MODE=${STATEFUL_MODE:-true}
+      - EVENT_RETENTION_HOURS=${EVENT_RETENTION_HOURS:-24}
+      - MAX_EVENTS_PER_SESSION=${MAX_EVENTS_PER_SESSION:-1000}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - SESSION_TIMEOUT_MINUTES=${SESSION_TIMEOUT_MINUTES:-30}
 
     # Network configuration for external LightRAG server connectivity
     networks:
       - lightrag-network
 
-    # Health check
+    # Health check for HTTP transport
     healthcheck:
-      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

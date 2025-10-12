@@ -68,6 +68,23 @@ LightRAG MCP Server acts as a bridge between LightRAG API v0237 and MCP-compatib
    docker-compose logs -f lightrag-mcp
    ```
 
+#### HTTP Transport Mode (Standalone Deployment)
+
+For standalone HTTP deployment, configure the environment for HTTP transport:
+
+```bash
+# In your .env file, set HTTP transport configuration
+TRANSPORT_MODE=http
+MCP_HOST=0.0.0.0
+MCP_PORT=3000
+```
+
+The HTTP server will be accessible at `http://localhost:3000` with the following endpoints:
+- `GET /health` - Health check endpoint
+- `GET /status` - Detailed server status
+- `GET /` - Server information
+- `GET/POST/DELETE /mcp` - MCP protocol endpoint
+
 ### Alternative: Direct Installation
 
 If you prefer not to use Docker:

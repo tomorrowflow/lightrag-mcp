@@ -2,13 +2,13 @@
 
 # LightRAG MCP Server
 
-**Fully functional LightRAG MCP integration with Docker containerization and remote server support.**
+**Fully functional LightRAG MCP integration with Docker containerization, StreamableHTTP transport, and remote server support.**
 
-A Model Context Protocol (MCP) server that provides seamless integration between LightRAG (Retrieval-Augmented Generation) API and MCP-compatible AI tools. This server enables AI assistants to interact with LightRAG's knowledge graph and document processing capabilities through standardized MCP tools.
+A Model Context Protocol (MCP) server that provides seamless integration between LightRAG (Retrieval-Augmented Generation) API and MCP-compatible AI tools. This server enables AI assistants to interact with LightRAG's knowledge graph and document processing capabilities through standardized MCP tools with both stdio and HTTP transport support.
 
 ## Description
 
-LightRAG MCP Server acts as a bridge between LightRAG API v0237 and MCP-compatible clients, allowing AI tools to leverage LightRAG's advanced retrieval and knowledge graph capabilities. The server is fully containerized with Docker and supports remote LightRAG server connections.
+LightRAG MCP Server acts as a bridge between LightRAG API v0237 and MCP-compatible clients, allowing AI tools to leverage LightRAG's advanced retrieval and knowledge graph capabilities. The server is fully containerized with Docker and supports remote LightRAG server connections with multiple transport modes.
 
 ### Key Features
 
@@ -18,15 +18,21 @@ LightRAG MCP Server acts as a bridge between LightRAG API v0237 and MCP-compatib
 - **📊 Monitoring & Health Checks**: Real-time status monitoring of LightRAG API and document processing pipelines
 - **🐳 Docker Containerization**: Complete Docker setup with docker-compose for easy deployment
 - **🌐 Remote Server Support**: Connect to remote LightRAG servers (tested with 192.168.2.16:9621)
-- **🔧 MCP Protocol Compliance**: Full MCP v1.0 compatibility with stdio transport
+- **🔧 Multiple Transport Modes**: Full MCP v1.0 compatibility with both stdio and StreamableHTTP transport
+- **🌊 StreamableHTTP Transport**: HTTP-based MCP protocol with Server-Sent Events (SSE) streaming
+- **💾 Session Management**: Stateful sessions with event store for resumability and persistence
+- **🔒 Security & CORS**: Comprehensive security middleware with CORS support
 
 ### Recent Updates & Fixes
 
+**✅ StreamableHTTP Transport**: Complete implementation of HTTP-based MCP protocol with SSE streaming
+**✅ Session Management**: Stateful sessions with file-based event store for resumability
 **✅ API Compatibility**: Fully compatible with LightRAG Server API v0237 (core v1.4.9.2)
 **✅ Authentication**: Proper X-API-Key header authentication implementation
 **✅ Response Formatting**: Correct handling of query responses with references
 **✅ Docker Integration**: Complete containerization with health checks and networking
 **✅ Remote Server**: Tested and verified with remote LightRAG server configurations
+**✅ HTTP Endpoints**: RESTful health and status endpoints for monitoring
 
 ## Installation
 
@@ -68,22 +74,42 @@ LightRAG MCP Server acts as a bridge between LightRAG API v0237 and MCP-compatib
    docker-compose logs -f lightrag-mcp
    ```
 
-#### HTTP Transport Mode (Standalone Deployment)
+#### StreamableHTTP Transport Mode (Recommended)
 
-For standalone HTTP deployment, configure the environment for HTTP transport:
+The server now supports StreamableHTTP transport, which provides HTTP-based MCP protocol with Server-Sent Events (SSE) streaming. This is the default and recommended mode for production deployments.
 
 ```bash
-# In your .env file, set HTTP transport configuration
+# In your .env file, configure StreamableHTTP transport
 TRANSPORT_MODE=http
 MCP_HOST=0.0.0.0
 MCP_PORT=3000
+STATEFUL_MODE=true
+EVENT_RETENTION_HOURS=24
+MAX_EVENTS_PER_SESSION=1000
+SESSION_TIMEOUT_MINUTES=30
+CORS_ORIGINS=*
 ```
 
-The HTTP server will be accessible at `http://localhost:3000` with the following endpoints:
-- `GET /health` - Health check endpoint
-- `GET /status` - Detailed server status
-- `GET /` - Server information
-- `GET/POST/DELETE /mcp` - MCP protocol endpoint
+**StreamableHTTP Features:**
+- ✅ **Session Management**: Stateful sessions with unique session IDs
+- ✅ **Event Store**: File-based persistence for session resumability
+- ✅ **Server-Sent Events**: Real-time streaming responses
+- ✅ **CORS Support**: Configurable cross-origin resource sharing
+- ✅ **Health Monitoring**: Built-in health and status endpoints
+
+**Available Endpoints:**
+- `GET /health` - Health check with LightRAG API status
+- `GET /status` - Detailed server configuration and statistics
+- `GET /` - Server information and available endpoints
+- `POST /mcp/` - MCP protocol endpoint (requires proper headers)
+- `GET /mcp/` - Establish SSE connection for server-initiated messages
+- `DELETE /mcp/` - Terminate session (when using session IDs)
+
+**MCP Protocol Flow:**
+1. **Initialize**: Send `initialize` request to establish session
+2. **Complete Handshake**: Send `notifications/initialized`
+3. **Use Tools**: Call `tools/list`, `tools/call`, etc. with session ID
+4. **Session Persistence**: Sessions persist across reconnections (stateful mode)
 
 ### Alternative: Direct Installation
 
@@ -100,7 +126,13 @@ pip install -e .
 
 ### MCP Client Configuration
 
-#### For Claude Desktop
+The LightRAG MCP server supports multiple transport modes. Choose the configuration that best fits your deployment scenario.
+
+#### StreamableHTTP Transport (Recommended)
+
+StreamableHTTP transport provides HTTP-based MCP protocol with better reliability and session management.
+
+##### For Claude Desktop (StreamableHTTP)
 
 Add to your `claude_desktop_config.json`:
 
@@ -108,29 +140,56 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "lightrag-mcp": {
-      "command": "docker",
-      "args": [
-        "run",
-        "--rm",
-        "-i",
-        "--network",
-        "host",
-        "-e",
-        "LIGHTRAG_API_HOST=192.168.2.16",
-        "-e",
-        "LIGHTRAG_API_PORT=9621",
-        "-e",
-        "LIGHTRAG_API_KEY=no-key",
-        "lightrag-mcp:latest"
-      ]
+      "url": "http://localhost:3000/mcp/",
+      "transport": {
+        "type": "http"
+      }
     }
   }
 }
 ```
 
-#### For VSCode Kilo Code Extension
+##### For VSCode Kilo Code Extension (StreamableHTTP)
 
 Update your MCP settings in VSCode:
+
+```json
+{
+  "mcpServers": {
+    "lightrag-mcp": {
+      "url": "http://localhost:3000/mcp/",
+      "transport": {
+        "type": "http"
+      }
+    }
+  }
+}
+```
+
+##### Custom HTTP Client Configuration
+
+For custom MCP clients using StreamableHTTP:
+
+```javascript
+// Example HTTP MCP client configuration
+const mcpConfig = {
+  serverUrl: "http://localhost:3000/mcp/",
+  headers: {
+    "Content-Type": "application/json",
+    "Accept": "application/json, text/event-stream"
+  },
+  // Session management
+  sessionManagement: true,
+  // Enable SSE for streaming responses
+  enableSSE: true
+};
+```
+
+#### Stdio Transport (Legacy)
+
+For clients that only support stdio transport or development purposes.
+
+##### For Claude Desktop (Stdio)
 
 ```json
 {
@@ -149,6 +208,8 @@ Update your MCP settings in VSCode:
         "LIGHTRAG_API_PORT=9621",
         "-e",
         "LIGHTRAG_API_KEY=no-key",
+        "-e",
+        "TRANSPORT_MODE=stdio",
         "lightrag-mcp:latest"
       ]
     }
@@ -156,7 +217,35 @@ Update your MCP settings in VSCode:
 }
 ```
 
-#### Development Mode (without Docker)
+##### For VSCode Kilo Code Extension (Stdio)
+
+```json
+{
+  "mcpServers": {
+    "lightrag-mcp": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--network",
+        "host",
+        "-e",
+        "LIGHTRAG_API_HOST=192.168.2.16",
+        "-e",
+        "LIGHTRAG_API_PORT=9621",
+        "-e",
+        "LIGHTRAG_API_KEY=no-key",
+        "-e",
+        "TRANSPORT_MODE=stdio",
+        "lightrag-mcp:latest"
+      ]
+    }
+  }
+}
+```
+
+##### Development Mode (without Docker)
 
 ```json
 {
@@ -175,6 +264,42 @@ Update your MCP settings in VSCode:
     }
   }
 }
+```
+
+#### Testing MCP Connection
+
+You can test the MCP connection using curl commands:
+
+```bash
+# Test StreamableHTTP transport
+# 1. Initialize session
+curl -X POST http://localhost:3000/mcp/ \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "init-1",
+    "method": "initialize",
+    "params": {
+      "protocolVersion": "2024-11-05",
+      "capabilities": {"roots": {"listChanged": false}},
+      "clientInfo": {"name": "test-client", "version": "1.0.0"}
+    }
+  }'
+
+# 2. Extract session ID from response headers (mcp-session-id)
+# 3. Send initialized notification
+curl -X POST http://localhost:3000/mcp/ \
+  -H "Content-Type: application/json" \
+  -H "mcp-session-id: YOUR_SESSION_ID" \
+  -d '{"jsonrpc": "2.0", "method": "notifications/initialized"}'
+
+# 4. List available tools
+curl -X POST http://localhost:3000/mcp/ \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -H "mcp-session-id: YOUR_SESSION_ID" \
+  -d '{"jsonrpc": "2.0", "id": "tools-1", "method": "tools/list", "params": {}}'
 ```
 
 ## Configuration

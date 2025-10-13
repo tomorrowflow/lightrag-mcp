@@ -16,10 +16,11 @@ from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.streamable_http import StreamableHTTPServerTransport
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 from starlette.types import Receive, Scope, Send
 import uvicorn
 
@@ -38,10 +39,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class HTTPServerContext:
-    """Extended context for HTTP server with transport and event store."""
+    """Extended context for HTTP server with session manager and event store."""
     lightrag_client: LightRAGClient
     event_store: EventStore
-    transport: Optional[StreamableHTTPServerTransport] = None
+    session_manager: Optional[StreamableHTTPSessionManager] = None
 
 
 @asynccontextmanager
@@ -52,7 +53,7 @@ async def http_server_lifespan(app: Starlette) -> AsyncIterator[HTTPServerContex
     Manages:
     - LightRAG client lifecycle
     - Event store initialization and cleanup
-    - HTTP transport setup and teardown
+    - Session manager setup and teardown
     """
     # Initialize LightRAG client
     lightrag_client = LightRAGClient(
@@ -67,11 +68,12 @@ async def http_server_lifespan(app: Starlette) -> AsyncIterator[HTTPServerContex
         max_events_per_session=config.MAX_EVENTS_PER_SESSION
     )
 
-    # Initialize transport
-    transport = StreamableHTTPServerTransport(
-        mcp_session_id=None,  # Will be set per session
-        is_json_response_enabled=False,  # Use SSE streams
+    # Create session manager with our FastMCP server and event store
+    # FastMCP wraps a low-level MCP server, we need to pass the low-level server
+    session_manager = StreamableHTTPSessionManager(
+        app=fastmcp_server._mcp_server,  # Use the underlying MCP server
         event_store=event_store if config.STATEFUL_MODE else None,
+        json_response=False,  # Use SSE streams by default
     )
 
     # Background cleanup task for old events
@@ -93,12 +95,14 @@ async def http_server_lifespan(app: Starlette) -> AsyncIterator[HTTPServerContex
         cleanup_task = asyncio.create_task(cleanup_events_periodically())
 
     try:
-        context = HTTPServerContext(
-            lightrag_client=lightrag_client,
-            event_store=event_store,
-            transport=transport
-        )
-        yield context
+        # Start the session manager
+        async with session_manager.run():
+            context = HTTPServerContext(
+                lightrag_client=lightrag_client,
+                event_store=event_store,
+                session_manager=session_manager
+            )
+            yield context
     finally:
         # Cancel cleanup task
         if cleanup_task:
@@ -124,16 +128,20 @@ class LightRAGHttpServer:
     def __init__(self):
         """Initialize the HTTP server."""
         self.app: Optional[Starlette] = None
-        self.transport: Optional[StreamableHTTPServerTransport] = None
+        self.session_manager: Optional[StreamableHTTPSessionManager] = None
         self.server: Optional[uvicorn.Server] = None
         self._shutdown_event = asyncio.Event()
 
     def _create_asgi_app(self, lifespan_context: HTTPServerContext) -> Starlette:
         """Create the ASGI application with all routes and middleware."""
 
+        # ASGI handler for streamable HTTP connections
+        async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
+            await lifespan_context.session_manager.handle_request(scope, receive, send)
+
         # Define routes
         routes = [
-            Route("/mcp", self._handle_mcp, methods=["GET", "POST", "DELETE"]),
+            Mount("/mcp", app=handle_streamable_http),  # MCP protocol endpoint
             Route("/health", self._handle_health, methods=["GET"]),
             Route("/status", self._handle_status, methods=["GET"]),
             Route("/", self._handle_root, methods=["GET"]),
@@ -197,58 +205,6 @@ class LightRAGHttpServer:
 
         return lifespan
 
-    async def _handle_mcp(self, request) -> Response:
-        """Handle MCP protocol requests."""
-        try:
-            # Get the lifespan context from app state
-            if not hasattr(request.app.state, 'lifespan_context'):
-                return JSONResponse(
-                    {"error": "Server not properly initialized"},
-                    status_code=500
-                )
-
-            context = request.app.state.lifespan_context
-
-            # For now, return a simple response indicating MCP endpoint is available
-            # TODO: Implement full MCP protocol handling
-            return JSONResponse({
-                "message": "MCP endpoint available",
-                "method": request.method,
-                "path": request.url.path,
-                "note": "Full MCP protocol implementation pending"
-            })
-
-        except Exception as e:
-            if config.ENABLE_ERROR_LOGGING:
-                logger.error(f"Error handling MCP request: {e}", exc_info=True)
-            else:
-                logger.error(f"Error handling MCP request: {str(e)}")
-
-            # Return security-focused error message
-            error_message = "Internal server error"
-            if config.ENVIRONMENT == "development":
-                error_message = f"Internal server error: {str(e)}"
-
-            return JSONResponse(
-                {"error": error_message, "type": "server_error"},
-                status_code=500
-            )
-
-        except Exception as e:
-            if config.ENABLE_ERROR_LOGGING:
-                logger.error(f"Error handling MCP request: {e}", exc_info=True)
-            else:
-                logger.error(f"Error handling MCP request: {str(e)}")
-
-            # Return security-focused error message
-            error_message = "Internal server error"
-            if config.ENVIRONMENT == "development":
-                error_message = f"Internal server error: {str(e)}"
-
-            return JSONResponse(
-                {"error": error_message, "type": "server_error"},
-                status_code=500
-            )
 
     async def _handle_health(self, request) -> Response:
         """Health check endpoint."""
@@ -363,17 +319,19 @@ class LightRAGHttpServer:
                 self.app = self._create_asgi_app(context)
 
                 # Store context for route handlers
-                self.app.state.lifespan_context = context
-                self.transport = context.transport
+                if self.app and hasattr(self.app, 'state'):
+                    self.app.state.lifespan_context = context
+                self.session_manager = context.session_manager
 
                 # Create uvicorn server
-                self.server = uvicorn.Server(uvicorn.Config(
+                server = uvicorn.Server(uvicorn.Config(
                     app=self.app,
                     host=config.MCP_HOST,
                     port=config.MCP_PORT,
                     access_log=True,
                     log_level="info" if config.MCP_HOST != "localhost" else "debug"
                 ))
+                self.server = server
 
                 logger.info(f"Starting LightRAG MCP HTTP server on {config.MCP_HOST}:{config.MCP_PORT}")
                 logger.info(f"CORS origins: {config.CORS_ORIGINS}")
@@ -388,7 +346,8 @@ class LightRAGHttpServer:
                 signal.signal(signal.SIGINT, signal_handler)
 
                 # Start server
-                await self.server.serve()
+                if self.server and hasattr(self.server, 'serve'):
+                    await self.server.serve()
 
         except Exception as e:
             if config.ENABLE_ERROR_LOGGING:

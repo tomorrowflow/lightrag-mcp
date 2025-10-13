@@ -158,9 +158,7 @@ Update your MCP settings in VSCode:
   "mcpServers": {
     "lightrag-mcp": {
       "url": "http://localhost:3000/mcp/",
-      "transport": {
-        "type": "http"
-      }
+      "type": "streamable-http"
     }
   }
 }
